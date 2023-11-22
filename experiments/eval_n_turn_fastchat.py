@@ -5,13 +5,10 @@ from intercode.envs import (
 from tqdm import tqdm
 from typing import Dict, List
 from experiments.policies import (
-    CompletionGPTPolicy, ChatGPTPolicy, PalmChatPolicy, PalmCompletionPolicy
+    CompletionGPTPolicy, ChatGPTPolicy, PalmChatPolicy, PalmCompletionPolicy, FastChatPolicy
 )
 from experiments.utils import HANDICAP_MAP, PROMPT_MAP
 from rich import print
-from datetime import datetime
-
-now = datetime.now()
 
 parser = argparse.ArgumentParser(description='N-turn evaluation for Intercode environment')
 parser.add_argument('--data_path', type=str, help='path to dataset to evaluate on')
@@ -69,8 +66,7 @@ class ExperimentWrapper():
         # Define log file name and path
         if not os.path.exists(args.log_dir):
             os.makedirs(args.log_dir, exist_ok=True)
-            
-        log_file_name = f"{self.env.name}_multiturn_{args.model}_{args.max_turns}_turns_{now}.json"
+        log_file_name = f"{self.env.name}_multiturn_{args.model}_{args.max_turns}_turns.json"
         self.log_path = os.path.join(args.log_dir, log_file_name)
         self.log_data = {}
 
@@ -79,11 +75,13 @@ class ExperimentWrapper():
             raise ValueError(f"Prompt {args.template} not recognized; Options: {PROMPT_MAP.keys()}")
         self.policy = None
         if args.policy == 'chat':
-            self.policy = ChatGPTPolicy(language=args.env, setting=SETTING_MAP[args.env],
+            self.policy = FastChatPolicy(language=args.env, setting=SETTING_MAP[args.env],
                 template=args.template, dialogue_limit=args.dialogue_limit, model=args.model, num_samples=args.num_samples)
         elif args.policy == 'complete':
-            self.policy = CompletionGPTPolicy(language=args.env, setting=SETTING_MAP[args.env],
-                template=args.template, dialogue_limit=args.dialogue_limit, model=args.model)
+            # self.policy = CompletionGPTPolicy(language=args.env, setting=SETTING_MAP[args.env],
+            #     template=args.template, dialogue_limit=args.dialogue_limit, model=args.model)
+            print("Not implemented yet")
+            exit()
         else:
             raise ValueError(f'Policy {args.policy} not recognized')
         
@@ -134,6 +132,9 @@ class ExperimentWrapper():
                 else:
                     if done and reward != 1 and action.lower() != "skip":
                         observation = "Submitted flag is incorrect. Keep trying!"
+
+        if len(observation) > 800:
+            observation = observation[:800] + "\n The Observation is truncated due to the length is too long."
         return observation, reward, valid_action
     
     def run_expr(self):
@@ -152,7 +153,8 @@ class ExperimentWrapper():
 
                 if self.args.verbose:
                     print(f'------\nQuery {idx}: {self.env.query}')
-
+                actions = []
+                is_code = []
                 for turn in range(self.args.max_turns):
                     # Invoke Action -> Observation Iteration
                     try:
@@ -164,15 +166,15 @@ class ExperimentWrapper():
                     except (ValueError, TypeError) as e:
                         print(f"[ERROR] Index {idx}: {e}")
                         # Logging
-                        turn_history["actions"].append("blocked")
-                        turn_history["rewards"].append(0)
+                        # turn_history["actions"].append("blocked")
+                        # turn_history["rewards"].append(0)
                         break
-
+                    
                     turn_history["actions"][turn] = actions
                     turn_history["observations"][turn] = []
                     turn_history["rewards"][turn] = []
                     turn_history["valid_actions"][turn] = []
-                    
+
                     for action, is_code in zip(actions, is_codes):
                         observation, reward, valid_action = self.execute(action, is_code)
                         turn_history["observations"][turn].append(str(observation))
@@ -206,7 +208,6 @@ class ExperimentWrapper():
                     best_action = turn_history["actions"][turn][best_action_idx]
                     best_observation, best_reward, best_valid_action = self.execute(best_action, is_codes[best_action_idx])
 
-
                     if self.args.verbose:
                         print(f"- Turn {turn}")
                         print(f"-- Action: {best_action}")
@@ -214,8 +215,7 @@ class ExperimentWrapper():
                             print(f"-- Observation: (meta) No code output, policy's template's retry message was invoked")
                         else:
                             print(f"-- Observation: {best_observation}")
-
-                    self.policy.dialogue.append({"role": "assistant", "content": best_action})
+                    self.policy.dialogue.append({"role": "agent", "content": best_action})
                     # Logging
                     turn_history["best_actions"].append(best_action)
                     turn_history["best_observations"].append(str(best_observation)) # To avoid serialization issues
